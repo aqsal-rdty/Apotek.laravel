@@ -2,8 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\Order;
 use Illuminate\Http\Request;
+use App\Models\Medicine;
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\OrderExport;
+use Illuminate\Support\Facades\Auth;
 
 class OrderController extends Controller
 {
@@ -12,7 +17,16 @@ class OrderController extends Controller
      */
     public function index()
     {
-        //
+        $tanggal = request('tanggal');
+        $query = Order::with('user');
+
+        if ($tanggal) {
+            $query->whereDate('created_at', $tanggal);
+        }
+
+        $orders = $query->orderBy('created_at', "DESC")->simplePaginate(10);
+
+        return view('order.kasir.index', compact('orders', 'tanggal'));
     }
 
     /**
@@ -20,7 +34,8 @@ class OrderController extends Controller
      */
     public function create()
     {
-        //
+        $medicines = Medicine::all();
+        return view('order.kasir.create', compact('medicines'));
     }
 
     /**
@@ -28,15 +43,77 @@ class OrderController extends Controller
      */
     public function store(Request $request)
     {
-        //
+        $request->validate([
+            'name_customer' => 'required',
+            'medicines' => 'required'
+        ]);
+
+        $arrayDistinct = array_count_values($request->medicines);
+
+        $arrayAssocMedicines = [];
+
+        foreach ($arrayDistinct as $id => $count) {
+            $medicine = Medicine::where('id', $id)->first();
+
+            if ($medicine->stock < $count) {
+                $valueBefore = [
+                    'name_customer' => $request->name_customer,
+                    'medicines' => $request->medicines,
+                ];
+                $msg = "Stok obat {$medicine->name} : {$medicine->stock}. tidak mencukupi.";
+                return redirect()->back()->with('failed', $msg)->withInput($valueBefore);
+            }
+
+            $subPrice = $medicine['price'] * $count;
+
+            $arrayItem = [
+                'id' => $id,
+                'name_medicine' => $medicine['name'],
+                'qty' => $count,
+                'price' => $medicine['price'],
+                'sub_price' => $subPrice
+            ];
+
+            array_push($arrayAssocMedicines, $arrayItem);
+        }
+
+        $totalPrice = 0;
+        foreach ($arrayAssocMedicines as $item) {
+            $totalPrice += (int)$item['sub_price'];
+        }
+
+        $priceWithPPN = $totalPrice + ($totalPrice * 0.1);
+
+        $proces = Order::create([
+            'user_id' => Auth::user()->id,
+            'medicines' => $arrayAssocMedicines,
+            'name_customer' => $request->name_customer,
+            'price' => $totalPrice,
+            'total_price' => $priceWithPPN
+        ]);
+
+        if ($proces) {
+            foreach ($arrayAssocMedicines as $item) {
+                $medicine = Medicine::find($item['id']);
+                $medicine->stock -= $item['qty'];
+                $medicine->save();
+            }
+
+            $order = Order::where('user_id', Auth::user()->id)->orderBy('created_at', 'DESC')->first();
+            return redirect()->route('print', $order['id']);
+        } else {
+            return redirect()->back()->with('failed', 'Gagal membuat data Pembelian, silakan coba lagi!!');
+        }
     }
+
 
     /**
      * Display the specified resource.
      */
-    public function show(Order $order)
+    public function show($id)
     {
-        //
+        $order = Order::find($id);
+        return view('order.kasir.print', compact('order'));
     }
 
     /**
@@ -61,5 +138,26 @@ class OrderController extends Controller
     public function destroy(Order $order)
     {
         //
+    }
+
+    public function downloadPdf($id)
+    {
+        
+        $order = Order::find($id)->toArray();
+        view()->share('order', $order);
+        $pdf = PDF::loadView('order.kasir.download-pdf', $order);
+        return $pdf->download('order.pdf');
+        
+    }
+    public function data ()
+    {
+        $orders = Order::with('user')->simplePaginate(5);
+        return view("order.admin.index", compact('orders'));
+    }
+
+    public function exportExcel() 
+    {
+        $file_name = 'data_pembelian' . '.xlsx';
+        return Excel::download(new OrderExport, $file_name);
     }
 }

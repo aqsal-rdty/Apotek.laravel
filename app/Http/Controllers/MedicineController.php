@@ -70,7 +70,7 @@ class MedicineController extends Controller
         $request->validate([
             'name' => 'required|min:3',
             'type' => 'required',
-            'price' => 'required|numeric',
+            'price' => 'required|numeric', 
         ]);
 
         Medicine::where('id', $id)->update([

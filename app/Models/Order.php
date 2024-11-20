@@ -10,13 +10,18 @@ class Order extends Model
     use HasFactory;
 
     protected $fillable = [
-        'used_id',
-        'madicines',
+        'user_id',
+        'medicines',
         'name_customer',
         'total_price',
     ];
 
+    // protected $guarded = [''];
     protected $casts = [
         'medicines' => 'array',
     ];
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
 }
